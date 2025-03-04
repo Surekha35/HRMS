@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Location Tracker</title>
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            background-color: #f0f8ff;
+        }
+        
+        header {
+            background-color: #3498db;
+            color: white;
+            width: 100%;
+            text-align: center;
+            padding: 1rem 0;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        
+        .container {
+            max-width: 800px;
+            width: 90%;
+            margin: 2rem auto;
+            padding: 2rem;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        #map {
+            width: 100%;
+            height: 400px;
+            margin: 1.5rem 0;
+            border-radius: 8px;
+            border: 1px solid #ddd;
+            z-index: 1;
+        }
+        
+        .coordinates {
+            background-color: #f9f9f9;
+            padding: 1rem;
+            border-radius: 8px;
+            margin: 1rem 0;
+            line-height: 1.6;
+        }
+        
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+        
+        button:hover {
+            background-color: #2980b9;
+        }
+        
+        button:disabled {
+            background-color: #95a5a6;
+            cursor: not-allowed;
+        }
+        
+        .error {
+            color: #e74c3c;
+            background-color: #fadbd8;
+            padding: 1rem;
+            border-radius: 4px;
+            margin: 1rem 0;
+            display: none;
+        }
+        
+        .info-box {
+            background-color: #eaf2f8;
+            padding: 1rem;
+            border-radius: 8px;
+            margin: 1rem 0;
+        }
+        
+        .tracking-history {
+            margin-top: 2rem;
+        }
+        
+        .history-item {
+            padding: 0.5rem;
+            margin: 0.5rem 0;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Location Tracker</h1>
+    </header>
+    
+    <div class="container">
+        <div class="info-box">
+            <p>Click the button below to track your current location. This application will display your coordinates and show your position on the map.</p>
+        </div>
+        
+        <button id="trackButton">Track My Location</button>
+        <button id="watchButton">Start Continuous Tracking</button>
+        <button id="stopButton" disabled>Stop Tracking</button>
+        
+        <div id="error" class="error">Unable to retrieve your location. Please enable location services in your browser.</div>
+        
+        <div class="coordinates" id="coordinates">
+            <p>Latitude: <span id="latitude">-</span></p>
+            <p>Longitude: <span id="longitude">-</span></p>
+            <p>Accuracy: <span id="accuracy">-</span> meters</p>
+            <p>Last Updated: <span id="timestamp">-</span></p>
+        </div>
+        
+        <div id="map"></div>
+        
+        <div class="tracking-history">
+            <h3>Location History</h3>
+            <div id="history-list"></div>
+        </div>
+    </div>
+    
+    <!-- Leaflet JS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const trackButton = document.getElementById('trackButton');
+            const watchButton = document.getElementById('watchButton');
+            const stopButton = document.getElementById('stopButton');
+            const latitudeElement = document.getElementById('latitude');
+            const longitudeElement = document.getElementById('longitude');
+            const accuracyElement = document.getElementById('accuracy');
+            const timestampElement = document.getElementById('timestamp');
+            const errorElement = document.getElementById('error');
+            const historyList = document.getElementById('history-list');
+            
+            let map;
+            let marker;
+            let circle;
+            let watchId = null;
+            let locationHistory = [];
+            
+            // Initialize the map with a default location
+            function initMap() {
+                // Create a map centered on the world
+                map = L.map('map').setView([0, 0], 2);
+                
+                // Add the OpenStreetMap tiles
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                }).addTo(map);
+            }
+            
+            // Initialize the map
+            initMap();
+            
+            // Function to update location display
+            function updateLocationDisplay(position) {
+                const latitude = position.coords.latitude;
+                const longitude = position.coords.longitude;
+                const accuracy = position.coords.accuracy;
+                const timestamp = new Date(position.timestamp).toLocaleTimeString();
+                
+                // Update text display
+                latitudeElement.textContent = latitude.toFixed(6);
+                longitudeElement.textContent = longitude.toFixed(6);
+                accuracyElement.textContent = accuracy.toFixed(2);
+                timestampElement.textContent = timestamp;
+                
+                // Update map
+                const currentLocation = [latitude, longitude];
+                
+                // Remove previous marker and circle if they exist
+                if (marker) {
+                    map.removeLayer(marker);
+                }
+                if (circle) {
+                    map.removeLayer(circle);
+                }
+                
+                // Add marker for the current location
+                marker = L.marker(currentLocation).addTo(map);
+                marker.bindPopup("You are here").openPopup();
+                
+                // Add circle to show accuracy
+                circle = L.circle(currentLocation, {
+                    radius: accuracy,
+                    color: '#3498db',
+                    fillColor: '#3498db',
+                    fillOpacity: 0.2
+                }).addTo(map);
+                
+                // Move and zoom the map to the current location
+                map.setView(currentLocation, 15);
+                
+                // Add to location history
+                locationHistory.push({
+                    lat: latitude,
+                    lng: longitude,
+                    accuracy: accuracy,
+                    timestamp: timestamp
+                });
+                
+                // Update history display
+                updateHistoryDisplay();
+            }
+            
+            // Function to update the history display
+            function updateHistoryDisplay() {
+                historyList.innerHTML = '';
+                
+                // Display last 10 locations (most recent first)
+                const recentLocations = locationHistory.slice(-10).reverse();
+                
+                recentLocations.forEach((location, index) => {
+                    const historyItem = document.createElement('div');
+                    historyItem.classList.add('history-item');
+                    historyItem.innerHTML = `
+                        <strong>${index + 1}.</strong> Lat: ${location.lat.toFixed(6)}, 
+                        Lng: ${location.lng.toFixed(6)}, 
+                        Accuracy: ${location.accuracy.toFixed(2)}m, 
+                        Time: ${location.timestamp}
+                    `;
+                    
+                    // Make history items clickable to show that location on the map
+                    historyItem.style.cursor = 'pointer';
+                    historyItem.addEventListener('click', function() {
+                        map.setView([location.lat, location.lng], 15);
+                        
+                        // Flash the marker
+                        if (marker) {
+                            map.removeLayer(marker);
+                        }
+                        
+                        marker = L.marker([location.lat, location.lng]).addTo(map);
+                        marker.bindPopup(`Location at ${location.timestamp}`).openPopup();
+                    });
+                    
+                    historyList.appendChild(historyItem);
+                });
+            }
+            
+            // Function to handle location tracking errors
+            function handleLocationError(error) {
+                errorElement.style.display = 'block';
+                
+                switch(error.code) {
+                    case error.PERMISSION_DENIED:
+                        errorElement.textContent = "Location access denied. Please enable location services.";
+                        break;
+                    case error.POSITION_UNAVAILABLE:
+                        errorElement.textContent = "Location information is unavailable.";
+                        break;
+                    case error.TIMEOUT:
+                        errorElement.textContent = "Location request timed out.";
+                        break;
+                    case error.UNKNOWN_ERROR:
+                        errorElement.textContent = "An unknown error occurred.";
+                        break;
+                }
+            }
+            
+            // Track location once
+            trackButton.addEventListener('click', function() {
+                errorElement.style.display = 'none';
+                
+                if (navigator.geolocation) {
+                    navigator.geolocation.getCurrentPosition(
+                        updateLocationDisplay,
+                        handleLocationError,
+                        { enableHighAccuracy: true }
+                    );
+                } else {
+                    errorElement.textContent = "Geolocation is not supported by your browser.";
+                    errorElement.style.display = 'block';
+                }
+            });
+            
+            // Start continuous tracking
+            watchButton.addEventListener('click', function() {
+                errorElement.style.display = 'none';
+                
+                if (navigator.geolocation) {
+                    watchButton.disabled = true;
+                    stopButton.disabled = false;
+                    
+                    watchId = navigator.geolocation.watchPosition(
+                        updateLocationDisplay,
+                        handleLocationError,
+                        { enableHighAccuracy: true, maximumAge: 10000 }
+                    );
+                } else {
+                    errorElement.textContent = "Geolocation is not supported by your browser.";
+                    errorElement.style.display = 'block';
+                }
+            });
+            
+            // Stop continuous tracking
+            stopButton.addEventListener('click', function() {
+                if (watchId !== null) {
+                    navigator.geolocation.clearWatch(watchId);
+                    watchId = null;
+                    watchButton.disabled = false;
+                    stopButton.disabled = true;
+                }
+            });
+        });
+    </script>
+</body>
+</html>
